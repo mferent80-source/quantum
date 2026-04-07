@@ -633,19 +633,16 @@ body.wakelock-active .header{top:26px}
 
   <!-- BACKUP & SYNC BAR -->
   <div class="backup-bar">
-    <div class="backup-title">💾 Backup & Sync</div>
+    <div class="backup-title">💾 Backup & Sync Firebase</div>
     <button class="btn-backup btn-bk-export" onclick="exportJSON()">⬇ Export JSON</button>
     <button class="btn-backup btn-bk-import" onclick="document.getElementById('importFileInput').click()">⬆ Import JSON</button>
     <button class="btn-backup btn-bk-copy" onclick="copyToClipboard()">📋 Copiază</button>
-    <div class="sync-row">
-      <input class="sync-inp" id="gistToken" placeholder="GitHub Token (ghp_...)" type="password" oninput="saveGistSettings()">
-      <input class="sync-inp" id="gistId" placeholder="Gist ID (opțional)" oninput="saveGistSettings()" style="max-width:130px">
+    <div class="sync-row" style="margin-top:8px">
+      <input class="sync-inp" id="fbRoomId" placeholder="Cod sync (ex: marius2025)" oninput="saveFbSettings()" style="text-transform:lowercase;letter-spacing:1px">
+      <button class="btn-bk-push" onclick="fbPush()">☁ Trimite</button>
+      <button class="btn-bk-pull" onclick="fbPull()">⬇ Primește</button>
     </div>
-    <div class="sync-row">
-      <button class="btn-bk-push" onclick="pushToGist()">☁ Push (PC→Cloud)</button>
-      <button class="btn-bk-pull" onclick="pullFromGist()">⬇ Pull (Cloud→Telefon)</button>
-    </div>
-    <div class="sync-status" id="syncStatus">— Nicio sincronizare recentă —</div>
+    <div class="sync-status" id="syncStatus">Introdu un cod sync identic pe PC și telefon</div>
   </div>
 
   <!-- STATS -->
@@ -1117,82 +1114,72 @@ function copyToClipboard(){
   });
 }
 
-// ── GITHUB GIST SYNC ──
-function saveGistSettings(){
-  localStorage.setItem('qv8_gist_token',document.getElementById('gistToken').value);
-  localStorage.setItem('qv8_gist_id',document.getElementById('gistId').value);
-}
+// ── FIREBASE SYNC ──
+const FB_URL='https://quantum-bbae2-default-rtdb.europe-west1.firebasedatabase.app';
+const FB_KEY='AIzaSyAkhreA0N2EBI9L2i0rL6N9Eyv-6OlaH5A';
+
 function setSyncStatus(msg,type=''){
   const el=document.getElementById('syncStatus');
   el.textContent=msg;el.className='sync-status'+(type?' '+type:'');
 }
+function saveFbSettings(){
+  const id=document.getElementById('fbRoomId').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+  localStorage.setItem('qv9_fb_room',id);
+}
+function getFbRoom(){
+  return document.getElementById('fbRoomId').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
+}
 
-async function pushToGist(){
-  const token=document.getElementById('gistToken').value.trim();
-  if(!token){showToast('Introdu GitHub Token!','err');return;}
-  const gistId=document.getElementById('gistId').value.trim();
+async function fbPush(){
+  const room=getFbRoom();
+  if(!room){showToast('Introdu un cod sync!','err');return;}
   setSyncStatus('⏳ Se trimite...');
-  const body={
-    description:'Quantum V9 Backup — '+new Date().toLocaleString('ro-RO'),
-    public:false,
-    files:{'quantum-v8-tasks.json':{content:JSON.stringify(tasks,null,2)}}
-  };
   try{
-    let url='https://api.github.com/gists';
-    let method='POST';
-    if(gistId){url+='/'+gistId;method='PATCH';}
-    const res=await fetch(url,{
-      method,
-      headers:{'Authorization':'token '+token,'Content-Type':'application/json'},
-      body:JSON.stringify(body)
+    const res=await fetch(`${FB_URL}/sync/${room}.json?key=${FB_KEY}`,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tasks,updatedAt:Date.now(),device:navigator.userAgent.includes('Mobile')?'telefon':'pc'})
     });
     if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    document.getElementById('gistId').value=data.id;
-    localStorage.setItem('qv8_gist_id',data.id);
-    setSyncStatus('✓ Push reușit · '+new Date().toLocaleTimeString('ro-RO'),'ok');
-    showToast('Date salvate în cloud ✓');
+    setSyncStatus('✓ Trimis · '+new Date().toLocaleTimeString('ro-RO'),'ok');
+    showToast('Sync trimis în cloud ✓');
   }catch(e){
-    setSyncStatus('✗ Eroare push: '+e.message,'err');
+    setSyncStatus('✗ Eroare: '+e.message,'err');
     showToast('Eroare sync!','err');
   }
 }
 
-async function pullFromGist(){
-  const token=document.getElementById('gistToken').value.trim();
-  const gistId=document.getElementById('gistId').value.trim();
-  if(!token||!gistId){showToast('Token și Gist ID necesare!','err');return;}
+async function fbPull(){
+  const room=getFbRoom();
+  if(!room){showToast('Introdu un cod sync!','err');return;}
   setSyncStatus('⏳ Se descarcă...');
   try{
-    const res=await fetch('https://api.github.com/gists/'+gistId,{
-      headers:{'Authorization':'token '+token}
-    });
+    const res=await fetch(`${FB_URL}/sync/${room}.json?key=${FB_KEY}`);
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
-    const content=data.files['quantum-v8-tasks.json']?.content;
-    if(!content)throw new Error('Fișier negăsit în Gist');
-    const imported=JSON.parse(content);
+    if(!data||!data.tasks)throw new Error('Nicio dată salvată pentru acest cod');
+    const imported=data.tasks;
     if(!Array.isArray(imported))throw new Error('Format invalid');
-    showConfirm(`Încarci ${imported.length} sarcini din cloud? Datele actuale vor fi ÎNLOCUITE.`,()=>{
+    const ago=data.updatedAt?Math.round((Date.now()-data.updatedAt)/60000)+'min în urmă':'?';
+    const dev=data.device||'?';
+    showConfirm(`Încarci ${imported.length} sarcini de pe ${dev} (${ago})? Datele locale vor fi înlocuite.`,()=>{
       tasks=imported;
       save();
-      setSyncStatus('✓ Pull reușit · '+new Date().toLocaleTimeString('ro-RO'),'ok');
+      setSyncStatus(`✓ Primit de pe ${dev} · ${new Date().toLocaleTimeString('ro-RO')}`,'ok');
       showToast(`${imported.length} sarcini sincronizate ✓`);
     });
   }catch(e){
-    setSyncStatus('✗ Eroare pull: '+e.message,'err');
+    setSyncStatus('✗ Eroare: '+e.message,'err');
     showToast('Eroare sync!','err');
   }
 }
 
-// Restaurare setări Gist la încărcare
-(function loadGistSettings(){
-  const t=localStorage.getItem('qv8_gist_token');
-  const id=localStorage.getItem('qv8_gist_id');
-  if(t)document.getElementById('gistToken').value=t;
+// Restaurare cod sync la încărcare
+(function loadFbSettings(){
+  const id=localStorage.getItem('qv9_fb_room');
   if(id){
-    document.getElementById('gistId').value=id;
-    setSyncStatus('Gist ID salvat: '+id.slice(0,8)+'...','warn');
+    document.getElementById('fbRoomId').value=id;
+    setSyncStatus('Cod sync salvat — gata de utilizare','warn');
   }
 })();
 
